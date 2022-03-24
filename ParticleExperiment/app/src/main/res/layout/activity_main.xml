@@ -10,12 +10,17 @@
         android:id="@+id/particleView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@drawable/ic_launcher_background"
-        app:particleCount="50"
-        app:particleRadius="15dp"
-        app:particleColor="@color/black"
-        app:lineColor="@color/red"
-        app:lineThickness="1dp"/>
+        android:background="@color/Blue500_DN900"
+        app:particleCount="200"
+        app:particleRadius="1dp"
+        app:particleRadiusVariance=".5"
+        app:particleColor="@color/white"
+        app:alphaMin="0.5"
+        app:lineColor="@color/white"
+        app:lineThickness="0.5dp"
+        app:lineDistance="30dp"
+        app:minSpeed="1"
+        app:maxSpeed="3"/>
 
     <TextView
         android:layout_width="wrap_content"
