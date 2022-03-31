@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/Blue500_DN900"
-        app:particleCount="200"
+        app:particleCount="1000"
         app:particleRadius="1dp"
         app:particleRadiusVariance=".5"
         app:particleColor="@color/white"
@@ -20,7 +20,10 @@
         app:lineThickness="0.5dp"
         app:lineDistance="30dp"
         app:minSpeed="1"
-        app:maxSpeed="3"/>
+        app:maxSpeed="3"
+        app:strongLineConnection="false"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"/>
 
     <TextView
         android:layout_width="wrap_content"
