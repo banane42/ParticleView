@@ -27,7 +27,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val particleManager: ParticleManager = ParticleManager()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isRunning = false
-    private var tickRate = 30L
+    private var tickRate = 10L
 
     init {
 
@@ -92,58 +92,20 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 //            }
 //        }
 
-//        val elapsed = measureTimeMillis {
-//            particleManager.particles.forEachIndexed { index, particle ->
-//                var i = index + 1
-//                while (i < particleManager.particles.size) {
-//                    val other = particleManager.particles[i]
-//                    val dist = particle.distance(other)
-//                    if (dist > lineDistance) {
-//                        break
-//                    }
-//                    if (!strongLineConnection) {
-//                        val strength = ((1f - dist / lineDistance) * 255).toInt()
-//                        linePaint.alpha = strength
-//                    }
-//                    canvas.drawLine(particle.xPos, particle.yPos, other.xPos, other.yPos, linePaint)
-//                    i += 1
-//                }
-//                circlePaint.alpha = particle.alpha ?: 255
-//                canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
-//            }
-//        }
-
-        fun drawLines(subject: ParticleManager.Particle, others: ArrayList<ParticleManager.Particle>) {
-            others.forEach { other ->
-                val dist = subject.distance(other)
-//                Log.d(TAG, "${subject.name} ($dist:$lineDistance) ${other.name}")
-                if (dist < lineDistance && dist > 0.001f) {
-                    if (!strongLineConnection) {
-                        val strength = ((1f - dist / lineDistance) * 255).toInt()
-                        linePaint.alpha = strength
-                    }
-                    canvas.drawLine(subject.xPos, subject.yPos, other.xPos, other.yPos, linePaint)
-                }
-            }
-        }
-
+        // Quadrant Connections
+        // lineDist of 30dp
+        // Slowdown at 425 particles
         val elapsed = measureTimeMillis {
-            particleManager.quadrants.forEachIndexed { row, cols ->
-                cols.forEachIndexed { col, particles ->
-                    particles.forEach { particle ->
-                        for (i in -1..1) {
-                            for (j in -1..1) {
-                                val r = particleManager.quadrants.getOrNull(row + i)
-                                val c = r?.getOrNull(col + j)
-                                c?.let {
-                                    drawLines(particle, it)
-                                }
-                            }
-                        }
-                        circlePaint.alpha = particle.alpha ?: 255
-                        canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
-                    }
+            particleManager.particles.forEach { particle ->
+                circlePaint.alpha = particle.alpha ?: 255
+                canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
+            }
+            particleManager.connections.forEach { (connection, _) ->
+                if (!strongLineConnection) {
+                    val strength = ((1f - connection.distance() / lineDistance) * 255).toInt()
+                    linePaint.alpha = strength
                 }
+                canvas.drawLine(connection.x1, connection.y1, connection.x2, connection.y2, linePaint)
             }
         }
 
@@ -181,12 +143,6 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }, diff)
     }
 
-    private fun bruteForceDraw(): Long {
-        return measureTimeMillis {
-            //TODO
-        }
-    }
-
     companion object {
         private const val TAG = "ParticleView"
     }
@@ -205,6 +161,8 @@ class ParticleManager {
     private var particleCount = 0
 
     lateinit var quadrants: Array<Array<ArrayList<Particle>>>
+    var connections: HashMap<Connection, Boolean> = HashMap()
+    var particles = arrayListOf<Particle>()
 
     fun setParticleCount(count: Int) {
         particleCount = count
@@ -236,20 +194,38 @@ class ParticleManager {
                     if (!particle.validate(width, height)) {
                         particle.reset(width, height)
                     }
-                    val newCol = min(((particle.xPos / (width + (3 * particle.radius))) * quadrants[0].size).toInt(), quadrants[0].size)
-                    val newRow = min(((particle.yPos / (height + (3 * particle.radius))) * quadrants.size).toInt(), quadrants.size)
+                    val newCol = min(((particle.xPos / (width + (3 * particle.radius))) * quadrants[0].size).toInt(), quadrants[0].size - 1)
+                    val newRow = min(((particle.yPos / (height + (3 * particle.radius))) * quadrants.size).toInt(), quadrants.size - 1)
                     newQuads[newRow][newCol].add(particle)
                 }
             }
         }
         quadrants = newQuads
-//        quadrants.forEachIndexed { i, rows ->
-//            rows.forEachIndexed { j, cols ->
-//                cols.forEach { particle ->
-//                    Log.d(TAG, "${particle.name}: ($i, $j)")
-//                }
-//            }
-//        }
+        connections.clear()
+        quadrants.forEachIndexed { row, cols ->
+            cols.forEachIndexed { col, particles ->
+                particles.forEach { particle ->
+                    for (i in -1..1) {
+                        for (j in -1..1) {
+                            val r = quadrants.getOrNull(row + i)
+                            val c = r?.getOrNull(col + j)
+                            c?.let {
+                                it.forEach { other ->
+                                    val dist = particle.distance(other)
+                                    if (dist > 0.0f && dist < lineDist) {
+                                        val connectionA = Connection(particle.xPos, particle.yPos, other.xPos, other.yPos)
+                                        val connectionB = Connection(other.xPos, other.yPos, particle.xPos, particle.yPos)
+                                        if (!connections.containsKey(connectionA) || !connections.containsKey(connectionB)) {
+                                            connections[connectionA] = true
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun initialize(radiusVariance: Float, alphaMin: Float? = null, maxSpeed: Float, minSpeed: Float) {
@@ -268,6 +244,18 @@ class ParticleManager {
             val col = ((particle.xPos / width) * quadrants[0].size).toInt()
             val row = ((particle.yPos / height) * quadrants.size).toInt()
             quadrants[row][col].add(particle)
+            particles.add(particle)
+        }
+    }
+
+    class Connection(
+        val x1: Float,
+        val y1: Float,
+        val x2: Float,
+        val y2: Float
+    ) {
+        fun distance(): Float {
+            return sqrt((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1))
         }
     }
 
@@ -277,7 +265,7 @@ class ParticleManager {
         val alpha: Int? = null,
         minSpeed: Float = 1f,
         maxSpeed: Float = 10f
-    ): Comparable<Particle> {
+    ) {
 
         enum class Sides {
             Top, Right, Bottom, Left
@@ -331,23 +319,8 @@ class ParticleManager {
             return sqrt((other.yPos - yPos) * (other.yPos - yPos) + (other.xPos - xPos) * (other.xPos - xPos))
         }
 
-        fun distToOrigin(): Float {
-//            val originX = -radius * 3
-//            val originY = -radius * 3
-            val originX = 0
-            val originY = 0
-            return sqrt((yPos - originY) * (yPos - originY) + (xPos - originX) * (xPos - originX))
-        }
-
         override fun toString(): String {
             return "$name Velocity: ($xVel, $yVel) Position: ($xPos, $yPos)\n"
-        }
-
-        override fun compareTo(other: Particle): Int {
-            val originDiff = ((distToOrigin() - other.distToOrigin()) * 1000f).toInt()
-            val xDiff = (xPos - other.xPos) * 10f
-            val yDiff = yPos - other.yPos
-            return ((xDiff + yDiff + originDiff) * 1000f).toInt()
         }
 
     }
