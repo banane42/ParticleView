@@ -100,13 +100,15 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 circlePaint.alpha = particle.alpha ?: 255
                 canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
             }
-            particleManager.connections.forEach { (connection, _) ->
+            particleManager.lines.forEach { line ->
+//                Log.d(TAG, "Lines: ${line.name}")
                 if (!strongLineConnection) {
-                    val strength = ((1f - connection.distance() / lineDistance) * 255).toInt()
+                    val strength = ((1f - line.distance / lineDistance) * 255).toInt()
                     linePaint.alpha = strength
                 }
-                canvas.drawLine(connection.x1, connection.y1, connection.x2, connection.y2, linePaint)
+                canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
             }
+//            Log.d(TAG, "-------------------Step----LineCount: ${particleManager.lines.size}---------------")
         }
 
         if (isRunning) {
@@ -161,8 +163,9 @@ class ParticleManager {
     private var particleCount = 0
 
     lateinit var quadrants: Array<Array<ArrayList<Particle>>>
-    var connections: HashMap<Connection, Boolean> = HashMap()
+    private var connections: HashMap<Particle, Particle> = HashMap()
     var particles = arrayListOf<Particle>()
+    var lines = arrayListOf<Line>()
 
     fun setParticleCount(count: Int) {
         particleCount = count
@@ -186,6 +189,7 @@ class ParticleManager {
     }
 
     fun step() {
+        // Organize particles
         val newQuads = Array(quadrants.size) { Array(quadrants[0].size) { ArrayList<Particle>() } }
         quadrants.forEachIndexed { row, cols ->
             cols.forEachIndexed { col, particles ->
@@ -201,7 +205,9 @@ class ParticleManager {
             }
         }
         quadrants = newQuads
+        // Create Connections
         connections.clear()
+        lines.clear()
         quadrants.forEachIndexed { row, cols ->
             cols.forEachIndexed { col, particles ->
                 particles.forEach { particle ->
@@ -213,10 +219,11 @@ class ParticleManager {
                                 it.forEach { other ->
                                     val dist = particle.distance(other)
                                     if (dist > 0.0f && dist < lineDist) {
-                                        val connectionA = Connection(particle.xPos, particle.yPos, other.xPos, other.yPos)
-                                        val connectionB = Connection(other.xPos, other.yPos, particle.xPos, particle.yPos)
-                                        if (!connections.containsKey(connectionA) || !connections.containsKey(connectionB)) {
-                                            connections[connectionA] = true
+                                        val name = "${particle.name} <-> ${other.name}"
+                                        connections[particle] = other
+                                        val line = Line(name, particle.xPos, particle.yPos, other.xPos, other.yPos)
+                                        if (!connections.containsKey(other)) {
+                                            lines.add(line)
                                         }
                                     }
                                 }
@@ -248,15 +255,14 @@ class ParticleManager {
         }
     }
 
-    class Connection(
+    class Line(
+        val name: String,
         val x1: Float,
         val y1: Float,
         val x2: Float,
         val y2: Float
     ) {
-        fun distance(): Float {
-            return sqrt((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1))
-        }
+        val distance = sqrt((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1))
     }
 
     class Particle(
