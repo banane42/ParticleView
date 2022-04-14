@@ -101,14 +101,12 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
             }
             particleManager.lines.forEach { line ->
-//                Log.d(TAG, "Lines: ${line.name}")
                 if (!strongLineConnection) {
                     val strength = ((1f - line.distance / lineDistance) * 255).toInt()
                     linePaint.alpha = strength
                 }
                 canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
             }
-//            Log.d(TAG, "-------------------Step----LineCount: ${particleManager.lines.size}---------------")
         }
 
         if (isRunning) {
@@ -162,7 +160,7 @@ class ParticleManager {
     var radius = 10f
     private var particleCount = 0
 
-    lateinit var quadrants: Array<Array<ArrayList<Particle>>>
+    private lateinit var quadrants: Array<Array<ArrayList<Particle>>>
     private var connections: HashMap<Particle, Particle> = HashMap()
     var particles = arrayListOf<Particle>()
     var lines = arrayListOf<Line>()
