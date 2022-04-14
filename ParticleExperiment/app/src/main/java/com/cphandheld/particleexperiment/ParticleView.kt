@@ -10,7 +10,13 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.async
 import java.lang.Integer.min
+import java.util.*
+import kotlin.collections.ArrayList
+import kotlin.collections.HashMap
 import kotlin.math.sqrt
 import kotlin.system.measureTimeMillis
 
@@ -92,23 +98,38 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 //            }
 //        }
 
-        // Quadrant Connections
+        // Quadrant Connections Unthreaded
         // lineDist of 30dp
         // Slowdown at 425 particles
+//        val elapsed = measureTimeMillis {
+//            particleManager.particles.forEach { particle ->
+//                circlePaint.alpha = particle.alpha ?: 255
+//                canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
+//            }
+//            particleManager.lines.forEach { line ->
+//                if (!strongLineConnection) {
+//                    val strength = ((1f - line.distance / lineDistance) * 255).toInt()
+//                    linePaint.alpha = strength
+//                }
+//                canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
+//            }
+//        }
+
         val elapsed = measureTimeMillis {
-            particleManager.particles.forEach { particle ->
-                circlePaint.alpha = particle.alpha ?: 255
-                canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
-            }
-            particleManager.lines.forEach { line ->
-                if (!strongLineConnection) {
-                    val strength = ((1f - line.distance / lineDistance) * 255).toInt()
-                    linePaint.alpha = strength
+            particleManager.stateQueue.poll()?.let { state ->
+                state.particles.forEach { particle ->
+                    circlePaint.alpha = particle.alpha ?: 255
+                    canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
                 }
-                canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
+                state.lines.forEach { line ->
+                    if (!strongLineConnection) {
+                        val strength = ((1f - line.distance / lineDistance) * 255).toInt()
+                        linePaint.alpha = strength
+                    }
+                    canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
+                }
             }
         }
-
         if (isRunning) {
             tick(elapsed)
         }
@@ -118,12 +139,16 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
     fun start() {
         if (!isRunning) {
             isRunning = true
+            particleManager.startStateCalculation()
             tick()
         }
     }
 
     fun stop() {
-        isRunning = false
+        if (isRunning) {
+            isRunning = false
+            particleManager.stopStateCalculation()
+        }
     }
 
     fun isRunning(): Boolean {
@@ -132,16 +157,31 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun tick(timeElapsed: Long = tickRate) {
         val diff = tickRate - timeElapsed
-        if (diff <= 0) {
-            particleManager.step()
-            invalidate()
-            return
+        if (particleManager.stateQueue.isNotEmpty()) {
+            if (diff <= 0) {
+                invalidate()
+                return
+            }
+            mainHandler.postDelayed({
+                invalidate()
+            }, diff)
+        } else {
+            mainHandler.postDelayed({ tick() }, tickRate)
         }
-        mainHandler.postDelayed({
-            particleManager.step()
-            invalidate()
-        }, diff)
     }
+
+//    private fun tick(timeElapsed: Long = tickRate) {
+//        val diff = tickRate - timeElapsed
+//        if (diff <= 0) {
+//            particleManager.step()
+//            invalidate()
+//            return
+//        }
+//        mainHandler.postDelayed({
+//            particleManager.step()
+//            invalidate()
+//        }, diff)
+//    }
 
     companion object {
         private const val TAG = "ParticleView"
@@ -150,7 +190,9 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
 }
 
-class ParticleManager {
+class ParticleManager(
+    val maxStates: Int = 20
+) {
 
     private val TAG = "ParticleManager"
 
@@ -159,11 +201,14 @@ class ParticleManager {
     private var lineDist = 0f
     var radius = 10f
     private var particleCount = 0
+    private var isCalculatingStates = false
 
     private lateinit var quadrants: Array<Array<ArrayList<Particle>>>
     private var connections: HashMap<Particle, Particle> = HashMap()
-    var particles = arrayListOf<Particle>()
-    var lines = arrayListOf<Line>()
+
+    val stateQueue: Queue<State> = LinkedList()
+    var particles = arrayListOf<Particle>() // unthreaded
+    var lines = arrayListOf<Line>() // unthreaded
 
     fun setParticleCount(count: Int) {
         particleCount = count
@@ -184,6 +229,26 @@ class ParticleManager {
 
     fun setParticleRadius(radius: Float) {
         this.radius = radius
+    }
+
+    fun initialize(radiusVariance: Float, alphaMin: Float? = null, maxSpeed: Float, minSpeed: Float) {
+
+        for (i in 0 until particleCount) {
+            val variance = radius * radiusVariance
+            val radiusMin = radius - variance
+            val radiusMax = radius + variance
+            val calcRadius = radiusMin + Math.random().toFloat() * (radiusMax - radiusMin)
+
+            val alpha: Int? = ((alphaMin?.plus(Math.random().toFloat() * 1f))?.times(255))?.toInt()
+
+            val particle = Particle(Util.names.random(), calcRadius, alpha, maxSpeed, minSpeed)
+            particle.xPos = Math.random().toFloat() * width
+            particle.yPos = Math.random().toFloat() * height
+            val col = ((particle.xPos / width) * quadrants[0].size).toInt()
+            val row = ((particle.yPos / height) * quadrants.size).toInt()
+            quadrants[row][col].add(particle)
+            particles.add(particle)
+        }
     }
 
     fun step() {
@@ -217,9 +282,8 @@ class ParticleManager {
                                 it.forEach { other ->
                                     val dist = particle.distance(other)
                                     if (dist > 0.0f && dist < lineDist) {
-                                        val name = "${particle.name} <-> ${other.name}"
                                         connections[particle] = other
-                                        val line = Line(name, particle.xPos, particle.yPos, other.xPos, other.yPos)
+                                        val line = Line(particle.xPos, particle.yPos, other.xPos, other.yPos)
                                         if (!connections.containsKey(other)) {
                                             lines.add(line)
                                         }
@@ -233,28 +297,32 @@ class ParticleManager {
         }
     }
 
-    fun initialize(radiusVariance: Float, alphaMin: Float? = null, maxSpeed: Float, minSpeed: Float) {
-
-        for (i in 0 until particleCount) {
-            val variance = radius * radiusVariance
-            val radiusMin = radius - variance
-            val radiusMax = radius + variance
-            val calcRadius = radiusMin + Math.random().toFloat() * (radiusMax - radiusMin)
-
-            val alpha: Int? = ((alphaMin?.plus(Math.random().toFloat() * 1f))?.times(255))?.toInt()
-
-            val particle = Particle(Util.names.random(), calcRadius, alpha, maxSpeed, minSpeed)
-            particle.xPos = Math.random().toFloat() * width
-            particle.yPos = Math.random().toFloat() * height
-            val col = ((particle.xPos / width) * quadrants[0].size).toInt()
-            val row = ((particle.yPos / height) * quadrants.size).toInt()
-            quadrants[row][col].add(particle)
-            particles.add(particle)
+    fun startStateCalculation() {
+        isCalculatingStates = true
+        GlobalScope.async {
+            while (isCalculatingStates) {
+                if (stateQueue.size < maxStates) {
+                    stateQueue.add(calculateStep())
+                }
+            }
         }
     }
 
+    fun stopStateCalculation() {
+        isCalculatingStates = false
+    }
+
+    private fun calculateStep(): State {
+        step()
+        return State(particles.clone() as ArrayList<Particle>, lines.clone() as ArrayList<Line>)
+    }
+
+    class State(
+        val particles: ArrayList<Particle>,
+        val lines: ArrayList<Line>
+    )
+
     class Line(
-        val name: String,
         val x1: Float,
         val y1: Float,
         val x2: Float,
