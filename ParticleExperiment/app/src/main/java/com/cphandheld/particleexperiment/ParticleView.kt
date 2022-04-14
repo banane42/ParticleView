@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import java.lang.Integer.min
 import kotlin.math.sqrt
 import kotlin.system.measureTimeMillis
 
@@ -26,7 +27,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val particleManager: ParticleManager = ParticleManager()
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isRunning = false
-    private var tickRate = 10L
+    private var tickRate = 30L
 
     init {
 
@@ -41,7 +42,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 circlePaint.color = getColor(R.styleable.ParticleView_particleColor, Color.WHITE)
                 linePaint.color = getColor(R.styleable.ParticleView_lineColor, Color.WHITE)
                 linePaint.strokeWidth = getDimension(R.styleable.ParticleView_lineThickness, 1f)
-                lineDistance = getDimension(R.styleable.ParticleView_lineDistance, 100f).dpToPx
+                lineDistance = getDimension(R.styleable.ParticleView_lineDistance, 0f).dpToPx
                 maxSpeed = getFloat(R.styleable.ParticleView_maxSpeed, 10f)
                 minSpeed = getFloat(R.styleable.ParticleView_minSpeed, 1f)
                 strongLineConnection = getBoolean(R.styleable.ParticleView_strongLineConnection, false)
@@ -115,7 +116,8 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
         fun drawLines(subject: ParticleManager.Particle, others: ArrayList<ParticleManager.Particle>) {
             others.forEach { other ->
                 val dist = subject.distance(other)
-                if (dist > lineDistance) {
+//                Log.d(TAG, "${subject.name} ($dist:$lineDistance) ${other.name}")
+                if (dist < lineDistance && dist > 0.001f) {
                     if (!strongLineConnection) {
                         val strength = ((1f - dist / lineDistance) * 255).toInt()
                         linePaint.alpha = strength
@@ -131,7 +133,9 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                     particles.forEach { particle ->
                         for (i in -1..1) {
                             for (j in -1..1) {
-                                particleManager.quadrants.getOrNull(row + i)?.getOrNull(col + j)?.let {
+                                val r = particleManager.quadrants.getOrNull(row + i)
+                                val c = r?.getOrNull(col + j)
+                                c?.let {
                                     drawLines(particle, it)
                                 }
                             }
@@ -210,9 +214,13 @@ class ParticleManager {
         this.width = width
         this.height = height
         this.lineDist = lineDist
-        val cols = (width / lineDist).toInt()
-        val rows = (height / lineDist).toInt()
-        quadrants = Array(rows) { Array(cols) { ArrayList() } }
+        quadrants = if (lineDist > 0) {
+            val cols = (width / lineDist).toInt()
+            val rows = (height / lineDist).toInt()
+            Array(rows) { Array(cols) { ArrayList() } }
+        } else {
+            Array(1) { Array(1) { ArrayList() } }
+        }
     }
 
     fun setParticleRadius(radius: Float) {
@@ -228,13 +236,20 @@ class ParticleManager {
                     if (!particle.validate(width, height)) {
                         particle.reset(width, height)
                     }
-                    val newCol = ((particle.xPos / (width + (3 * particle.radius))) * quadrants[0].size).toInt()
-                    val newRow = ((particle.yPos / (height + (3 * particle.radius))) * quadrants.size).toInt()
+                    val newCol = min(((particle.xPos / (width + (3 * particle.radius))) * quadrants[0].size).toInt(), quadrants[0].size)
+                    val newRow = min(((particle.yPos / (height + (3 * particle.radius))) * quadrants.size).toInt(), quadrants.size)
                     newQuads[newRow][newCol].add(particle)
                 }
             }
         }
         quadrants = newQuads
+//        quadrants.forEachIndexed { i, rows ->
+//            rows.forEachIndexed { j, cols ->
+//                cols.forEach { particle ->
+//                    Log.d(TAG, "${particle.name}: ($i, $j)")
+//                }
+//            }
+//        }
     }
 
     fun initialize(radiusVariance: Float, alphaMin: Float? = null, maxSpeed: Float, minSpeed: Float) {
