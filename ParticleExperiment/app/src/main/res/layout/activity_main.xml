@@ -11,7 +11,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:background="@color/Blue500_DN900"
-        app:particleCount="1000"
+        app:particleCount="425"
         app:particleRadius="1dp"
         app:particleRadiusVariance=".5"
         app:particleColor="@color/white"

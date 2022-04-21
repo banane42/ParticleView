@@ -10,6 +10,7 @@ import android.os.Looper
 import android.util.AttributeSet
 import android.util.Log
 import android.view.View
+import java.lang.Integer.min
 import kotlin.math.sqrt
 import kotlin.system.measureTimeMillis
 
@@ -41,7 +42,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 circlePaint.color = getColor(R.styleable.ParticleView_particleColor, Color.WHITE)
                 linePaint.color = getColor(R.styleable.ParticleView_lineColor, Color.WHITE)
                 linePaint.strokeWidth = getDimension(R.styleable.ParticleView_lineThickness, 1f)
-                lineDistance = getDimension(R.styleable.ParticleView_lineDistance, 100f).dpToPx
+                lineDistance = getDimension(R.styleable.ParticleView_lineDistance, 0f).dpToPx
                 maxSpeed = getFloat(R.styleable.ParticleView_maxSpeed, 10f)
                 minSpeed = getFloat(R.styleable.ParticleView_minSpeed, 1f)
                 strongLineConnection = getBoolean(R.styleable.ParticleView_strongLineConnection, false)
@@ -65,7 +66,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        particleManager.setBounds(width.toFloat(), height.toFloat())
+        particleManager.setBounds(width.toFloat(), height.toFloat(), lineDistance)
         particleManager.initialize(particleVariance, particleAlphaMin, minSpeed, maxSpeed)
     }
 
@@ -91,51 +92,22 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 //            }
 //        }
 
+        // Quadrant Connections
+        // lineDist of 30dp
+        // Slowdown at 425 particles
         val elapsed = measureTimeMillis {
-            particleManager.particles.forEachIndexed { index, particle ->
-                var i = index + 1
-                while (i < particleManager.particles.size) {
-                    val other = particleManager.particles[i]
-                    val dist = particle.distance(other)
-                    if (dist > lineDistance) {
-                        break
-                    }
-                    if (!strongLineConnection) {
-                        val strength = ((1f - dist / lineDistance) * 255).toInt()
-                        linePaint.alpha = strength
-                    }
-                    canvas.drawLine(particle.xPos, particle.yPos, other.xPos, other.yPos, linePaint)
-                    i += 1
-                }
-                Log.d("ParticleView", "${particle.name} Neighbors checked: ${i - index}")
+            particleManager.particles.forEach { particle ->
                 circlePaint.alpha = particle.alpha ?: 255
                 canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
             }
+            particleManager.lines.forEach { line ->
+                if (!strongLineConnection) {
+                    val strength = ((1f - line.distance / lineDistance) * 255).toInt()
+                    linePaint.alpha = strength
+                }
+                canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
+            }
         }
-//        Log.d("ParticleView", "------------------TICK----------------------")
-//        val elapsed = measureTimeMillis {
-//
-//            var currentParticle = particleManager.particles.first()
-//
-//            particleManager.particles.forEachIndexed { index, particle ->
-//                var i = index - 1
-//                var otherParticle = particleManager.particles.getOrElse(i) { particleManager.particles.first() }
-//                while (i >= 0) {
-//                    val dist = particle.distance(otherParticle)
-//                    if (dist > lineDistance) {
-//                        break
-//                    }
-//                    if (!strongLineConnection) {
-//                        val strength = ((1f - dist / lineDistance.dpToPx) * 255).toInt()
-//                        linePaint.alpha = strength
-//                    }
-//                    canvas.drawLine(particle.xPos, particle.yPos, otherParticle.xPos, otherParticle.yPos, linePaint)
-//                    i -= 1
-//                }
-//                circlePaint.alpha = particle.alpha ?: 255
-//                canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
-//            }
-//        }
 
         if (isRunning) {
             tick(elapsed)
@@ -171,40 +143,43 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }, diff)
     }
 
-//    private fun tick() {
-//        particleManager.step()
-//        invalidate()
-//    }
-
-//    private fun tick() {
-//        mainHandler.postDelayed({
-//            particleManager.step()
-//            invalidate()
-//            if (isRunning) {
-//                tick()
-//            }
-//        }, 10)
-//    }
+    companion object {
+        private const val TAG = "ParticleView"
+    }
 
 
 }
 
 class ParticleManager {
 
+    private val TAG = "ParticleManager"
+
     private var width = 0f
     private var height = 0f
+    private var lineDist = 0f
     var radius = 10f
     private var particleCount = 0
 
-    val particles = ArrayList<Particle>()
+    private lateinit var quadrants: Array<Array<ArrayList<Particle>>>
+    private var connections: HashMap<Particle, Particle> = HashMap()
+    var particles = arrayListOf<Particle>()
+    var lines = arrayListOf<Line>()
 
     fun setParticleCount(count: Int) {
         particleCount = count
     }
 
-    fun setBounds(width: Float, height: Float) {
+    fun setBounds(width: Float, height: Float, lineDist: Float) {
         this.width = width
         this.height = height
+        this.lineDist = lineDist
+        quadrants = if (lineDist > 0) {
+            val cols = (width / lineDist).toInt()
+            val rows = (height / lineDist).toInt()
+            Array(rows) { Array(cols) { ArrayList() } }
+        } else {
+            Array(1) { Array(1) { ArrayList() } }
+        }
     }
 
     fun setParticleRadius(radius: Float) {
@@ -212,13 +187,50 @@ class ParticleManager {
     }
 
     fun step() {
-        particles.forEach { particle ->
-            particle.move()
-            if (!particle.validate(width, height)) {
-                particle.reset(width, height)
+        // Organize particles
+        val newQuads = Array(quadrants.size) { Array(quadrants[0].size) { ArrayList<Particle>() } }
+        quadrants.forEachIndexed { row, cols ->
+            cols.forEachIndexed { col, particles ->
+                particles.forEach { particle ->
+                    particle.move()
+                    if (!particle.validate(width, height)) {
+                        particle.reset(width, height)
+                    }
+                    val newCol = min(((particle.xPos / (width + (3 * particle.radius))) * quadrants[0].size).toInt(), quadrants[0].size - 1)
+                    val newRow = min(((particle.yPos / (height + (3 * particle.radius))) * quadrants.size).toInt(), quadrants.size - 1)
+                    newQuads[newRow][newCol].add(particle)
+                }
             }
         }
-        particles.sort()
+        quadrants = newQuads
+        // Create Connections
+        connections.clear()
+        lines.clear()
+        quadrants.forEachIndexed { row, cols ->
+            cols.forEachIndexed { col, particles ->
+                particles.forEach { particle ->
+                    for (i in -1..1) {
+                        for (j in -1..1) {
+                            val r = quadrants.getOrNull(row + i)
+                            val c = r?.getOrNull(col + j)
+                            c?.let {
+                                it.forEach { other ->
+                                    val dist = particle.distance(other)
+                                    if (dist > 0.0f && dist < lineDist) {
+                                        val name = "${particle.name} <-> ${other.name}"
+                                        connections[particle] = other
+                                        val line = Line(name, particle.xPos, particle.yPos, other.xPos, other.yPos)
+                                        if (!connections.containsKey(other)) {
+                                            lines.add(line)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun initialize(radiusVariance: Float, alphaMin: Float? = null, maxSpeed: Float, minSpeed: Float) {
@@ -234,9 +246,21 @@ class ParticleManager {
             val particle = Particle(Util.names.random(), calcRadius, alpha, maxSpeed, minSpeed)
             particle.xPos = Math.random().toFloat() * width
             particle.yPos = Math.random().toFloat() * height
+            val col = ((particle.xPos / width) * quadrants[0].size).toInt()
+            val row = ((particle.yPos / height) * quadrants.size).toInt()
+            quadrants[row][col].add(particle)
             particles.add(particle)
         }
-        particles.sort()
+    }
+
+    class Line(
+        val name: String,
+        val x1: Float,
+        val y1: Float,
+        val x2: Float,
+        val y2: Float
+    ) {
+        val distance = sqrt((y2 - y1) * (y2 - y1) + (x2 - x1) * (x2 - x1))
     }
 
     class Particle(
@@ -245,7 +269,7 @@ class ParticleManager {
         val alpha: Int? = null,
         minSpeed: Float = 1f,
         maxSpeed: Float = 10f
-    ): Comparable<Particle> {
+    ) {
 
         enum class Sides {
             Top, Right, Bottom, Left
@@ -299,23 +323,8 @@ class ParticleManager {
             return sqrt((other.yPos - yPos) * (other.yPos - yPos) + (other.xPos - xPos) * (other.xPos - xPos))
         }
 
-        fun distToOrigin(): Float {
-//            val originX = -radius * 3
-//            val originY = -radius * 3
-            val originX = 0
-            val originY = 0
-            return sqrt((yPos - originY) * (yPos - originY) + (xPos - originX) * (xPos - originX))
-        }
-
         override fun toString(): String {
             return "$name Velocity: ($xVel, $yVel) Position: ($xPos, $yPos)\n"
-        }
-
-        override fun compareTo(other: Particle): Int {
-            val originDiff = ((distToOrigin() - other.distToOrigin()) * 1000f).toInt()
-            val xDiff = (xPos - other.xPos) * 10f
-            val yDiff = yPos - other.yPos
-            return ((xDiff + yDiff + originDiff) * 1000f).toInt()
         }
 
     }
