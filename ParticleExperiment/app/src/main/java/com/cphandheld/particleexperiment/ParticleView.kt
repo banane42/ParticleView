@@ -1,5 +1,6 @@
 package com.cphandheld.particleexperiment
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.Resources
 import android.graphics.Canvas
@@ -19,6 +20,7 @@ import kotlin.collections.ArrayList
 import kotlin.collections.HashMap
 import kotlin.math.sqrt
 import kotlin.system.measureTimeMillis
+import kotlin.time.measureTime
 
 class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null): View(context, attrs) {
 
@@ -30,7 +32,10 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
     private val maxSpeed: Float
     private val minSpeed: Float
     private val strongLineConnection: Boolean
-    private val particleManager: ParticleManager = ParticleManager()
+    private val particleCount: Int
+    private val particleRadius: Float
+
+    private lateinit var particleManager: ParticleManagerV2
     private val mainHandler = Handler(Looper.getMainLooper())
     private var isRunning = false
     private var tickRate = 10L
@@ -42,9 +47,8 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
         context.obtainStyledAttributes(attrs, R.styleable.ParticleView).apply {
             try {
-                val count = getInteger(R.styleable.ParticleView_particleCount, 0)
-                particleManager.setParticleCount(count)
-                particleManager.setParticleRadius(getDimension(R.styleable.ParticleView_particleRadius, 10f))
+                particleCount = getInteger(R.styleable.ParticleView_particleCount, 0)
+                particleRadius = getDimension(R.styleable.ParticleView_particleRadius, 10f)
                 circlePaint.color = getColor(R.styleable.ParticleView_particleColor, Color.WHITE)
                 linePaint.color = getColor(R.styleable.ParticleView_lineColor, Color.WHITE)
                 linePaint.strokeWidth = getDimension(R.styleable.ParticleView_lineThickness, 1f)
@@ -70,10 +74,19 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
         }
     }
 
+    @SuppressLint("DrawAllocation")
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
-        particleManager.setBounds(width.toFloat(), height.toFloat(), lineDistance)
-        particleManager.initialize(particleVariance, particleAlphaMin, minSpeed, maxSpeed)
+        particleManager = ParticleManagerV2(particleCount,
+            50,
+            width.toFloat(),
+            height.toFloat(),
+        lineDistance,
+        particleRadius,
+        particleVariance,
+        particleAlphaMin,
+        minSpeed,
+        maxSpeed)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -115,12 +128,34 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 //            }
 //        }
 
+//        val elapsed = measureTimeMillis {
+//            particleManager.stateQueue.poll()?.let { state ->
+//                state.particles.forEach { particle ->
+//                    circlePaint.alpha = particle.alpha ?: 255
+//                    canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
+//                }
+//                state.lines.forEach { line ->
+//                    if (!strongLineConnection) {
+//                        val strength = ((1f - line.distance / lineDistance) * 255).toInt()
+//                        linePaint.alpha = strength
+//                    }
+//                    canvas.drawLine(line.x1, line.y1, line.x2, line.y2, linePaint)
+//                }
+//            }
+//        }
+
         val elapsed = measureTimeMillis {
-            particleManager.stateQueue.poll()?.let { state ->
-                state.particles.forEach { particle ->
-                    circlePaint.alpha = particle.alpha ?: 255
-                    canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
+            particleManager.getState()?.let { state ->
+                //Draw Circles
+                state.particles.forEach { cols ->
+                    cols.forEach { particles ->
+                        particles.forEach { particle ->
+                            circlePaint.alpha = particle.alpha ?: 255
+                            canvas.drawCircle(particle.xPos, particle.yPos, particle.radius.dpToPx, circlePaint)
+                        }
+                    }
                 }
+                // Draw Lines
                 state.lines.forEach { line ->
                     if (!strongLineConnection) {
                         val strength = ((1f - line.distance / lineDistance) * 255).toInt()
@@ -130,11 +165,20 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
                 }
             }
         }
+
+        // Discovered that Even though The Async work. We are bottle necked by the draw function still
+        // Oddly giving more time to the draw function(increase tickRate) doesnt seem to be working.
+        // Calculation time increases when tickRate increases. Probably bugged.
+        avgDrawTime = (avgDrawTime + elapsed) / 2f
+        Log.d(TAG, "Avg Draw Time: $avgDrawTime ms\nEllapsed: $elapsed ms")
+
         if (isRunning) {
             tick(elapsed)
         }
 
     }
+
+    var avgDrawTime: Float = 0f
 
     fun start() {
         if (!isRunning) {
@@ -157,7 +201,7 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 
     private fun tick(timeElapsed: Long = tickRate) {
         val diff = tickRate - timeElapsed
-        if (particleManager.stateQueue.isNotEmpty()) {
+        if (!particleManager.isStateEmpty()) {
             if (diff <= 0) {
                 invalidate()
                 return
@@ -193,9 +237,6 @@ class ParticleView @JvmOverloads constructor(context: Context, attrs: AttributeS
 class ParticleManager(
     val maxStates: Int = 20
 ) {
-
-    private val TAG = "ParticleManager"
-
     private var width = 0f
     private var height = 0f
     private var lineDist = 0f

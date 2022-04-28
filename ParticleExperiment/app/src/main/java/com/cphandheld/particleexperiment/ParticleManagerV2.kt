@@ -26,6 +26,7 @@ class ParticleManagerV2(
     private val rows = if (lineDist > 0) (height / lineDist).toInt() else 1
     private val cols = if (lineDist > 0) (width / lineDist).toInt() else 1
     private var isCalculatingStates = false
+    private var newestState: StateV2? = null
 
     fun startStateCalculation() {
         if (!isCalculatingStates) {
@@ -38,6 +39,14 @@ class ParticleManagerV2(
         isCalculatingStates = false
     }
 
+    fun stateSize(): Int {
+        return stateQueue.size
+    }
+
+    fun isStateEmpty(): Boolean {
+        return stateQueue.isEmpty()
+    }
+
     fun getState(): StateV2? {
         val state = stateQueue.poll()
         if (stateQueue.size < maxStates) {
@@ -47,14 +56,23 @@ class ParticleManagerV2(
     }
 
     private fun calculateState() {
-        val scope = CoroutineScope(Dispatchers.IO)
+        val scope = CoroutineScope(Dispatchers.Unconfined)
         scope.async {
             if (stateQueue.size < maxStates) {
                 stateQueue.lastOrNull()?.let {
                     val newState = createState(it)
+                    newestState = newState
                     stateQueue.add(newState)
                 } ?: run {
-                    stateQueue.add(createState())
+                    newestState?.let {
+                        val newState = createState(it)
+                        newestState = newState
+                        stateQueue.add(newState)
+                    } ?: run {
+                        val newState = createState()
+                        newestState = newState
+                        stateQueue.add(newState)
+                    }
                 }
                 if (stateQueue.size < maxStates) {
                     calculateState()

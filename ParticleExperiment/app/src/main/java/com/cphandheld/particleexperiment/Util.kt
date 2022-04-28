@@ -9,6 +9,10 @@ class Util {
     }
 }
 
+
+val Any.TAG: String
+    get() = this.javaClass.simpleName
+
 val Float.pxToDp: Float
     get() = (this / Resources.getSystem().displayMetrics.density)
 val Float.dpToPx: Float
@@ -98,7 +102,7 @@ class Particle(
         newParticle.xPos = xPos
         newParticle.yPos = yPos
         newParticle.xVel = xVel
-        newParticle.yVel = xVel
+        newParticle.yVel = yVel
         newParticle.speed = speed
         return newParticle
     }
